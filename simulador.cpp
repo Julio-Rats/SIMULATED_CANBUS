@@ -2,7 +2,12 @@
 #include <unistd.h>
 using namespace std;
 
-Simulator_CAN::Simulator_CAN(Frame_CAN* frames, int length)
+// Quantidade de frames em fila na ultima vez.
+static bool   last_queue = false;
+// Time em que começou atual fila.
+static double last_time  = 0;
+
+Simulator_CAN::Simulator_CAN(Frame_CAN* frames, u_int16_t length)
 {
     /* Limpa a lista. */
     this->event_list.clear();
@@ -28,20 +33,20 @@ Simulator_CAN::Simulator_CAN(Frame_CAN* frames, int length)
 void Simulator_CAN::run_simulation(double time_simulation)
 {
     Event  prioritary_frame;
-
-    double       time_current = 0;
-    this->num_queue           = 0;
-    this->num_frames          = 0;
+    double time_current = 0;
+    bool   cont_queue;
+    this->num_queue     = 0;
+    this->num_frames    = 0;
     this->frames_mean = this->frames_mean_square = 0;
     this->wcrt = this->frames_burst = this->time_mean_burst = this->deadlines = 0;
+
+    last_queue = false;
+    last_time  = 0;
 
     while (time_current < time_simulation)
     {
         /* Pega o ID mais prioritario de agora*/
         prioritary_frame = get_priority_id();
-
-        /* Avança do tempo*/
-        time_current = prioritary_frame.time_happened;
 
         /* Calcula o WCRT deste ID*/
         if (prioritary_frame.time_happened != prioritary_frame.time_intended)
@@ -62,6 +67,9 @@ void Simulator_CAN::run_simulation(double time_simulation)
             printf("\n\n");
         }
 
+        /* Avança do tempo*/
+        time_current = prioritary_frame.time_happened+prioritary_frame.duration;
+
         /* Ajusta o tempo do novo evento*/
         prioritary_frame.time_happened += (prioritary_frame.frame.cycle_time + prioritary_frame.duration);
         prioritary_frame.time_intended  = prioritary_frame.time_happened;
@@ -69,23 +77,21 @@ void Simulator_CAN::run_simulation(double time_simulation)
         /* Adiciona o evento na lista de eventos*/
         this->realloc_event(prioritary_frame);
 
-        /* Avança o tempo atual com a duração do frame*/
-        time_current += prioritary_frame.duration;
-
-
         /* Ajusta os frames concorrentes (LOST ARBITRATION) e verifica filas*/
-        bool cont_queue = false;
+        cont_queue = false;
         for (Event& e: this->event_list)
-        {
             if (e.time_happened < time_current)
             {
                 e.time_happened = time_current;
                 cont_queue      = true;
             }
-            else
-                break;
-        }
+            else break;
+
+        /* Calcula maior time e frames no burst (fila)*/
+        this->calc_time_burst(time_current, cont_queue);
+
         vector<Event> deadlines;
+        deadlines.clear();
         /* Verifica deadlines */
         for (Event& e: this->event_list)
           if (e.is_deadline)
@@ -96,7 +102,6 @@ void Simulator_CAN::run_simulation(double time_simulation)
                   this->deadlines++;
                   e.deadline_occurred = e.time_happened;
                   deadlines.push_back(e);
-                  // this->realloc_event(e);
               }
           }
           else
@@ -108,33 +113,23 @@ void Simulator_CAN::run_simulation(double time_simulation)
                   e.is_deadline = true;
                   e.deadline_occurred = e.time_happened;
                   deadlines.push_back(e);
-                  // this->realloc_event(e);
               }
           }
-
         for (Event e: deadlines)
             this->realloc_event(e);
-
-
-        /* Calcula maior time e frames no burst (fila)*/
-        this->calc_time_burst((time_current), cont_queue);
     }
     /* Calculo o pior WCRT (Acumulado de todos so wcrt)*/
     for (Event e: this->event_list)
-        this->wcrt +=  e.wcrt;
-
-    if (this->num_queue != 0)
-      this->time_mean_burst = this->time_mean_burst/this->num_queue;
+      this->wcrt +=  e.wcrt;
 
     if (this->num_queue != 0)
     {
-        printf("burst %lf\n", this->frames_mean);
-        printf("burst %d\n", this->num_queue);
-        this->frames_burst = this->frames_mean/this->num_queue;
-        printf("Média: %f\n", this->frames_burst);
-        double desvio = ((this->frames_mean_square/this->num_queue)-(pow((this->frames_mean/this->num_queue),2)));
-        this->frames_burst += k_chebychev*desvio;
-        printf("Desvio: %f\n", desvio);
+        this->time_mean_burst /= this->num_queue;
+        this->frames_burst     = this->frames_mean/this->num_queue;
+        double desvio          = ((this->frames_mean_square/this->num_queue)-(this->frames_burst*this->frames_burst));
+        this->frames_burst    += k_chebychev*desvio;
+        // printf("deadlines: %d\n", this->deadlines);
+        // printf("k Desvio mais media: %f\n", this->frames_burst+(k_chebychev*desvio));
     }
 }
 
@@ -163,9 +158,13 @@ void Simulator_CAN::add_event(Event new_event)
 void Simulator_CAN::calc_time_burst(double time_current, bool length_queue)
 {
     // Quantidade de frames em fila na ultima vez.
-    static bool   last_queue = false;
+    // static bool   last_queue = false;
     // Time em que começou atual fila.
-    static double last_time  = 0;
+    // static double last_time  = 0;
+
+    /*
+        Verifica existencia de colisão, e calcula statisticas do bust.
+    */
 
     if (length_queue)
     {
@@ -174,20 +173,17 @@ void Simulator_CAN::calc_time_burst(double time_current, bool length_queue)
             last_time  = time_current;
             last_queue = true;
         }
-
         this->num_frames++;
     }
     else if (last_queue)
         {
-            // if ((time_current-last_time) > 0)
-                this->time_mean_burst += (time_current-last_time);
-
+            this->time_mean_burst    += (time_current-last_time);
             this->num_queue++;
-
             this->frames_mean        += this->num_frames;
             this->frames_mean_square += pow(this->num_frames,2);
             this->num_frames          = 0;
 
+            last_time  = time_current;
             last_queue = false;
         }
 }
@@ -215,6 +211,9 @@ void Simulator_CAN::realloc_event(Event new_event)
 {
     int old_pos;
     int new_pos = -1;
+    /*
+        Localiza a posição antiga do evento
+    */
     for (size_t i = 0; i < this->event_list.size(); i++)
         if (this->event_list[i].frame.id == new_event.frame.id)
         {
@@ -222,30 +221,32 @@ void Simulator_CAN::realloc_event(Event new_event)
             break;
         }
 
+    /*
+        Verifca se esta na ultima posição. se for apenas atualizar o evento.
+    */
     if ((old_pos+1) == this->event_list.size())
     {
         this->event_list[old_pos] = new_event;
         return;
     }
 
-
+    /*
+        Verifica e pega o indice (já ajustado).
+    */
     for (size_t i = (old_pos+1); i < this->event_list.size(); i++)
-    {
         if (this->event_list[i].time_happened >= new_event.time_happened)
         {
             new_pos = i-1;
             break;
         }
-    }
 
+    // Verifica se não achou indice(sou o maior); Seta na ultima posição
     if (new_pos == -1)
         new_pos = this->event_list.size()-1;
 
+    // Efetua SWAP.
     for (size_t i = old_pos; i < new_pos; i++)
-    {
         this->event_list[i] = this->event_list[i+1];
-    }
-
 
     this->event_list[new_pos] = new_event;
 }
@@ -271,7 +272,7 @@ void Simulator_CAN::sort_list()
     }
 }
 
-Frame_CAN* get_CANDB(FILE* candb, unsigned int& length)
+Frame_CAN* get_CANDB(FILE* candb, u_int16_t& length)
 {
    unsigned int  id;
    double        cycle_time, deadline_time, delay_time;

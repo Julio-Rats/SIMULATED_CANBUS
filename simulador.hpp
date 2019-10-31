@@ -28,13 +28,13 @@ class Frame_CAN
 class Event
 {
   public:
-      double        time_intended;    // Tempo no qual o frame ira concorrer pelo barramento
-      double        time_happened;    // Tempo real de acesso ao meio
-      double        duration;         // Tempo de duração de escrita no barramento
-      double        wcrt;             // Pior tempo de fila encontrado por esse frame
-      double        deadline_occurred;
-      bool          is_deadline;
-      Frame_CAN     frame;            // Dados do frame
+      double        time_intended;       // Tempo no qual o frame ira concorrer pelo barramento
+      double        time_happened;       // Tempo real de acesso ao meio
+      double        duration;            // Tempo de duração de escrita no barramento
+      double        wcrt;                // Pior tempo de fila encontrado por esse frame
+      double        deadline_occurred;   // Tempo do ultimo deadline ocorrido.
+      bool          is_deadline;         // Variavel se diz se estou em tempo "deadline".
+      Frame_CAN     frame;               // Dados do frame
 
       bool operator==(Event e) const{
           return (this->frame.id == e.frame.id);
@@ -45,19 +45,19 @@ class Event
 class Simulator_CAN
 {
   public:
-      std::vector<Event>  event_list;
-      double              wcrt;
-      double              time_mean_burst;
-      double              frames_burst;
-      unsigned int        deadlines;
+      std::vector<Event>   event_list;
+      double               wcrt;
+      double               time_mean_burst;
+      double               frames_burst;
+      unsigned int         deadlines;
 
-      Simulator_CAN(Frame_CAN* frames, int length);
+      Simulator_CAN(Frame_CAN* frames, u_int16_t length);
       void run_simulation(double time_simulation);
   private:
      double                frames_mean;
      double                frames_mean_square;
-     unsigned int          num_queue;
-     unsigned int          num_frames;
+     unsigned long int     num_queue;
+     unsigned long int     num_frames;
 
      void add_event(Event new_event);
      void calc_time_burst(double time_current, bool length_queue);
@@ -67,6 +67,6 @@ class Simulator_CAN
 };
 
 
-Frame_CAN* get_CANDB(FILE* candb, unsigned int& length);
+Frame_CAN* get_CANDB(FILE* candb, u_int16_t& length);
 
 #endif
